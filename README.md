@@ -27,7 +27,7 @@ script runs unchanged on a normal Debian host.
 ```bash
 curl -fsSL https://raw.githubusercontent.com/TonyD2F/zenreset/main/zenreset.sh -o zenreset.sh
 chmod +x zenreset.sh
-./zenreset.sh version   # expect: 1.5.0
+./zenreset.sh version   # expect: 1.5.1
 ```
 
 Every [release](https://github.com/TonyD2F/zenreset/releases) also carries
@@ -102,7 +102,7 @@ All flags are parsed globally, so they may follow any subcommand.
 | `unlink` | Removes the `oc` shortcut from `/usr/local/bin` and `~/.local/bin`. |
 | `uninstall` | Stops everything, removes the shortcut, and deletes the state and config directories. |
 | `help` | Prints the usage block. |
-| `version` | Prints the version (`1.5.0`). |
+| `version` | Prints the version (`1.5.1`). |
 
 | Flag | Effect |
 |---|---|

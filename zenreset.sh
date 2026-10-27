@@ -25,7 +25,7 @@
 # =============================================================================
 set -uo pipefail
 
-VERSION="1.5.0"
+VERSION="1.5.1"
 
 CFG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/zenreset"
 CFG_FILE="$CFG_DIR/config.env"
