@@ -1,361 +1,52 @@
-# zenreset
+Checked GitHub before writing anything. The key finding that makes this solvable: **Zen's free-model limit is keyed to your egress IP, not your account.** opencode issue [#34344](https://github.com/anomalyco/opencode/issues/34344) states it outright — "Rate limits on free models are tied to IP address, connecting to a VPN when you hit a limit resets it immediately and your session stays."
 
-[![CI](https://github.com/TonyD2F/zenreset/actions/workflows/ci.yml/badge.svg)](https://github.com/TonyD2F/zenreset/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/TonyD2F/zenreset?sort=semver)](https://github.com/TonyD2F/zenreset/releases)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Debian%20%7C%20proot-informational)](#requirements)
+So "resetting the limit" means exactly one thing: **change your egress IP and make opencode use it.** Nothing else in the CLI or config matters.
 
-Clear OpenCode Zen free-tier `Rate limit exceeded` errors by rotating your WARP egress IP.
+Two constraints that shape the script:
 
-**Platform:** Debian. Runs on a regular Debian host (`arm64`/`amd64`) and on
-Debian running under [`proot-distro`](https://github.com/termux/proot-distro)
-inside Termux on Android (`aarch64`).
+1. **No root, no TUN in proot.** So kernel WireGuard is out. Solution: [`bepass-org/warp-plus`](https://github.com/bepass-org/warp-plus) — a userspace WARP client that exposes a local SOCKS5 listener. It ships a static `linux-arm64` binary, runs fine inside proot, and deleting its `--cache-dir` forces a fresh WARP registration = fresh Cloudflare exit IP.
+2. **Bun has no SOCKS5 support** and silently treats `socks5://` as HTTP (oven-sh/bun#16812). So you need a real HTTP proxy in front. privoxy from Debian's own repos does that.
 
-## Why this exists
+Relevant repos I checked: `BerkeOruc/oplire` and `nxyystore/oplirex` (good, but they drive `warp-cli`, which is awkward on Termux), `Utsav-X-bit/opencode-ip-rotator` and `Sprtcrnbry/opencode-ip-rotator` (Docker-based — no Docker in proot), `shahradelahi/cloudflare-warp` (SOCKS+HTTP in one binary, decent alternative to warp-plus+privoxy), `bdliyq/opencode-rate-limit-retry` and `liamvinberg/opencode-rate-limit-fallback` (plugins — they retry/switch models but don't rotate IP).
 
-OpenCode Zen keys its free-model limiter to the caller's **egress IP**
-([anomalyco/opencode#34344](https://github.com/anomalyco/opencode/issues/34344)).
-Changing your WARP identity gives you a new exit IP, which clears the `429`
-immediately, and your account session survives the change.
 
-There is a second, **separate per-account daily/hourly quota** that IP rotation
-cannot fix. `zenreset.sh` says so plainly when it exhausts its attempts, instead
-of pretending another rotation will help.
-
-`usque` registers a free WARP account on first use and accepts Cloudflare's terms
-by passing `--accept-tos`. Rotating the egress IP works around a limiter keyed to
-your address; it does not create a new account or a new per-account quota.
-Whether that is acceptable is between you and the services you use.
-
-The script is built for the awkward case this was written from: OpenCode running
-on Debian installed through `proot-distro` under Termux on Android, where the
-usual WireGuard-based engines fall over (see [Engines](#engines)). The same
-script runs unchanged on a normal Debian host.
-
-## Install
+### Setup
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/TonyD2F/zenreset/main/zenreset.sh -o zenreset.sh
+cd ~
+cat > zenreset.sh   # paste, or: chmod +x zenreset.sh
 chmod +x zenreset.sh
-./zenreset.sh version   # expect: 1.7.0
+./zenreset.sh install
+./zenreset.sh shim          # optional but recommended
 ```
 
-Every [release](https://github.com/TonyD2F/zenreset/releases) also carries
-`zenreset.sh` as a download, if you would rather pin a version than track
-`main`. See [CHANGELOG.md](CHANGELOG.md) for what changed between versions.
-
-## Requirements
-
-- **Primary target:** Debian via [`proot-distro`](https://github.com/termux/proot-distro)
-  under Termux on Android, `aarch64`. This is the environment the script was
-  designed and tested against.
-- **Also works on:** an ordinary Debian host on `arm64` or `amd64`. The script
-  picks the matching release asset from each engine's latest GitHub release and
-  installs anything it is missing (`curl`, `unzip`, `privoxy`, `python3`) with
-  `apt-get`.
-- `opencode` on `PATH` if you want the automatic `opencode serve` step.
-- An authenticated OpenCode install (`~/.local/share/opencode/auth.json`) if you
-  want the Zen probe to report `OK` or `LIMITED` rather than `UNKNOWN`.
-- Network access on first use: the script downloads third-party binaries at
-  runtime. Nothing is vendored in this repository.
-
-## Quick start
+Then, when you hit a 429:
 
 ```bash
-# 1. Inspect the environment, fetch the engines, probe sockets, boot-test them.
-./zenreset.sh doctor
-
-# 2. Rotate the egress IP until Zen answers, then start `opencode serve`.
 ./zenreset.sh reset
-
-# 3. Optional: install an `oc` shortcut on your PATH.
-./zenreset.sh link
-oc status
 ```
 
-`reset --bg` runs the same rotation with `opencode serve` daemonised instead of
-in the foreground.
-
-Running `./zenreset.sh serve` asks which IP and port to serve on. Press Enter to
-accept `SERVE_HOST` and `SERVE_PORT` from your config. When stdin is not a
-terminal (scripts, CI, `curl | bash`), the prompt is skipped and the configured
-values are used, so nothing blocks.
-
-### Serve to your PC browser
-
-`serve` listens on `127.0.0.1` by default. To open it from another device on your
-LAN, put the phone's address, a password, and (if the browser needs it) CORS in
-`~/.config/zenreset/config.env`:
+Or let it babysit itself:
 
 ```bash
-SERVE_HOST=10.240.14.189     # the phone's IP on your network
-SERVE_PORT=3000
-SERVE_PASSWORD=choose-a-password
-SERVE_CORS=*                 # or e.g. http://10.0.0.5:3000
+nohup ./zenreset.sh watch &
 ```
 
-```bash
-./zenreset.sh serve --bg
-```
+### What it actually changes
 
-Open `http://10.240.14.189:3000` on your PC and log in as `opencode` with that
-password (`OPENCODE_SERVER_USERNAME` changes the username). `SERVE_PASSWORD` is
-exported as `OPENCODE_SERVER_PASSWORD`; with no password set the server is
-unauthenticated.
+| Layer | Action | Why |
+|---|---|---|
+| WARP identity | wipes `--cache-dir`, forces re-registration | new Cloudflare exit IP — this is the thing that lifts the limit |
+| Exit IP | loops until the IP differs *and* Zen stops 429-ing | guards against landing on a shared IP that's already burned |
+| Egress path | warp-plus SOCKS → privoxy → HTTP on `127.0.0.1:18118` | Bun can't speak SOCKS5 |
+| opencode env | lowercase `http_proxy`/`https_proxy` | opencode ignores the uppercase ones ([#6953](https://github.com/anomalyco/opencode/issues/6953)) |
+| opencode shim | wrapper in `~/.local/bin` sources the env | so you never have to remember exports |
+| Local caches | clears `~/.cache/opencode` only | `auth.json` is preserved, so no re-login |
 
-This is plain HTTP over your LAN. Anyone who can reach the port can try to log
-in, so use a real password and keep it on a trusted network.
+### Caveats worth knowing
 
-### The `oc` shortcut
-
-`./zenreset.sh link` writes an `oc` wrapper to `/usr/local/bin` when that
-directory is writable and already on `PATH`; otherwise it uses `~/.local/bin`
-(and creates it). The wrapper forwards short aliases:
-
-```text
-oc            -> reset      oc r      -> reset
-oc d          -> doctor     oc s      -> status
-oc v          -> serve      oc w      -> watch
-oc up         -> start      oc down   -> stop
-oc f          -> forget     oc h      -> help
-```
-
-## Commands
-
-All flags are parsed globally, so they may follow any subcommand.
-
-| Command | What it does |
-|---|---|
-| `install` | Installs missing dependencies, fetches every engine, writes the privoxy config and proxy env file. |
-| `doctor [--no-fetch]` | Prints arch, kernel, TUN, IPv6, privoxy, and cached engine. Fetches engines (unless `--no-fetch`), lists which are present, runs the socket-option probe, then boot-tests each installed engine. Under proot it skips the two warp-plus builds, which cannot work there. |
-| `reset` | Rotates the WARP identity, checks the new egress IP, probes Zen, clears local OpenCode caches, then starts `opencode serve`. |
-| `reset --bg` | Same as `reset`, but `opencode serve` is daemonised. |
-| `reset --engine NAME` | Forces a single engine instead of walking the configured order. |
-| `serve` | Brings the stack up if needed, asks for the IP and port (Enter keeps the configured defaults), then (re)starts `opencode serve` through the proxy. |
-| `start` | Brings up the first engine that works, writes the proxy env, and prints status. |
-| `status` | Shows engine, privoxy, and serve state, the direct IP, the proxy IP, and the Zen probe result. |
-| `stop` | Stops `opencode serve`, privoxy, and the engine. |
-| `watch` | Polls Zen every `WATCH_INTERVAL` seconds; resets on `LIMITED` and restarts `serve` if it is down. |
-| `forget` | Deletes the cached working-engine file (`~/.config/zenreset/engine.working`). |
-| `shim` | Wraps the real `opencode` binary in `~/.local/bin/opencode` so it always sources the proxy env. |
-| `link` | Installs the `oc` shortcut described above. |
-| `unlink` | Removes the `oc` shortcut from `/usr/local/bin` and `~/.local/bin`. |
-| `uninstall [--yes]` | Stops everything, removes the shortcut, and deletes the state and config directories. Prompts for confirmation; `--yes` skips it and is required when stdin is not a TTY. |
-| `help` | Prints the usage block. |
-| `version` | Prints the version (`1.7.0`). |
-
-| Flag | Effect |
-|---|---|
-| `--no-serve` | Sets `SERVE_AUTOSTART=0` for this run; rotation finishes without starting `opencode serve`. |
-| `--bg` | Sets `SERVE_BACKGROUND=1`; `opencode serve` runs daemonised. |
-| `--fg` | Sets `SERVE_BACKGROUND=0`; `opencode serve` runs in the foreground. |
-| `--engine NAME` | Sets `ENGINE` to one engine for this run (`--engine=NAME` also works). |
-| `--no-fetch` | Sets `DOCTOR_FETCH=0`; `doctor` skips downloading engines. |
-| `--yes`, `-y` | Sets `ASSUME_YES=1`; `uninstall` skips the confirmation prompt. |
-
-## Engines
-
-Default order: `usque`, `warp-plus-linux`, `warp-plus-android`, `cloudflare-warp`.
-`engine_order()` moves whichever engine last worked, cached in
-`~/.config/zenreset/engine.working`, to the front. `forget` clears that cache.
-
-| Engine | Protocol | Status on proot | Notes |
-|---|---|---|---|
-| `usque` | MASQUE/QUIC | **Works — default** | Never touches the `wireguard-go` bind path, so the proot limitation below does not apply. Registers a WARP account on first use. |
-| `warp-plus-linux` | WireGuard (`wireguard-go`) | **Fails under proot** | `SO_RCVBUFFORCE` / `SO_SNDBUFFORCE` return `EPERM`; the vendored bind code does not fall back to plain `SO_RCVBUF`, the device tears down and nil-derefs. |
-| `warp-plus-android` | WireGuard (`wireguard-go`) | **Fails under proot** | Same vendored `wireguard-go` code path as the Linux build; both builds are affected. |
-| `cloudflare-warp` | Cloudflare WARP client | Not the default | Kept as a fallback option. `doctor` boot-tests it. It talks directly to its own SOCKS/HTTP listeners, so no privoxy bridge is used. |
-
-### Why the warp-plus builds fail under proot
-
-Under proot you are fake root without `CAP_NET_ADMIN`, so
-`SO_RCVBUFFORCE` and `SO_SNDBUFFORCE` return `EPERM`. warp-plus's vendored
-`wireguard-go` does not fall back to plain `SO_RCVBUF`, so the device tears down
-and nil-derefs at:
-
-```text
-RoutineTUNEventReader -> Up -> BindUpdate -> Open -> listenNet
-wireguard/conn/bind_std.go
-```
-
-Both the Linux and Android builds are affected. This was confirmed empirically
-with `doctor`'s socket probe. `usque` is MASQUE/QUIC and never touches that code
-path, so it is unaffected — which is why it is the default.
-
-### The SOCKS-to-HTTP bridge
-
-Bun, OpenCode's runtime, has no SOCKS5 support and silently treats
-`socks5://` as HTTP. The warp-plus engines expose SOCKS, so the script bridges
-that listener to a real HTTP proxy with **privoxy**. `usque` also goes through
-the same HTTP port used by the probe and by OpenCode.
-
-## Configuration
-
-The script reads `~/.config/zenreset/config.env` (or
-`$XDG_CONFIG_HOME/zenreset/config.env`) after applying its built-in defaults.
-The file is sourced as shell. `config.env.example` in this repository mirrors
-every tunable and default.
-
-| Variable | Type | Default | Effect |
-|---|---|---|---|
-| `SOCKS_PORT` | port | `18086` | Local SOCKS5 port the engines listen on. |
-| `HTTP_PORT` | port | `18118` | Local HTTP proxy port used by privoxy, the IP check, the Zen probe, and OpenCode. |
-| `MAX_ATTEMPTS` | integer | `6` | Rotations attempted per engine before moving on. |
-| `ATTEMPT_SLEEP` | seconds | `3` | Pause between attempts. |
-| `MAX_RESET_SECONDS` | seconds | `900` | Wall-clock budget for one `reset` across all engines; `0` disables the deadline. |
-| `ENGINES` | list | `usque warp-plus-linux warp-plus-android cloudflare-warp` | Engine order used when `ENGINE` is empty. |
-| `ENGINE` | string | empty | Force one engine; empty means walk `ENGINES`/the cached order. |
-| `EXIT_MODE` | `warp` \| `psiphon` \| `scan` | `warp` | warp-plus exit strategy. `psiphon` adds `--cfon --country $PSIPHON_COUNTRY`; `scan` adds `--scan`. Ignored by `usque` and `cloudflare-warp`. |
-| `PSIPHON_COUNTRY` | country code | `US` | Country passed to warp-plus when `EXIT_MODE=psiphon`. |
-| `WARP_EXTRA_ARGS` | string | `-4` | Extra arguments appended to warp-plus invocations (IPv4-only by default). |
-| `WARP_TUN` | `0` \| `1` | `0` | `1` adds `--tun-experimental` to warp-plus. |
-| `PROBE_ZEN` | `0` \| `1` | `1` | Probe Zen after each new IP. With `0`, the first new IP is accepted without a probe. |
-| `PROBE_MODEL` | model ID | `deepseek-v4.1-flash-free` | Model sent in the probe request. |
-| `CLEAR_CACHE` | `0` \| `1` | `1` | Delete `~/.cache/opencode` after a successful rotation. |
-| `WATCH_INTERVAL` | seconds | `60` | Poll interval for `watch`. |
-| `FORCE_NEW_IP` | `0` \| `1` | `1` | Require the egress IP to differ from the previous one before accepting it. |
-| `ENGINE_BOOT_WAIT` | seconds | `6` | Grace period before an engine is considered alive or dead. |
-| `PROXY_WAIT` | seconds | `30` | How long to wait for an engine to provide working egress. |
-| `SERVE_AUTOSTART` | `0` \| `1` | `1` | Start `opencode serve` after a successful rotation. `--no-serve` overrides this. |
-| `SERVE_BACKGROUND` | `0` \| `1` | `0` | Run `opencode serve` daemonised. `--bg` / `--fg` override this. |
-| `SERVE_HOST` | address | `127.0.0.1` | `--hostname` passed to `opencode serve`. `serve` prompts for it, with this as the default. |
-| `SERVE_PORT` | port | `4096` | `--port` passed to `opencode serve`. `serve` prompts for it, with this as the default. |
-| `SERVE_ARGS` | string | empty | Extra arguments appended to `opencode serve`. |
-| `SERVE_PASSWORD` | string | empty | Exported as `OPENCODE_SERVER_PASSWORD` before launching `opencode serve`, which enables HTTP basic auth (username `opencode`). |
-| `SERVE_CORS` | string | empty | Space-separated origins, each passed as its own `--cors` flag. `*` allows any origin. |
-| `SERVE_WAIT` | seconds | `3` | Wait after launching a background `serve` before checking it. |
-| `SERVE_RESTART_ON_RESET` | `0` \| `1` | `1` | Restart an already-running `serve` after a reset. |
-| `SHA256_<ENGINE>` | hex | empty | Optional pin for a downloaded engine binary. The name is `SHA256_` plus the engine name in uppercase with `-` replaced by `_` (for example `SHA256_WARP_PLUS_LINUX`). A mismatch aborts the install. |
-
-Two environment variables are also read, but are not written to `config.env`:
-`GH_TOKEN` lifts the unauthenticated GitHub API limit that `install` and
-`doctor` hit when fetching release metadata, and `NO_COLOR` disables ANSI
-colours. Output is also uncoloured automatically when stdout is not a TTY.
-
-## How it works
-
-1. **Rotate the WARP identity.** `reset` stops the engine, deletes its per-engine
-   state directory, and starts it again with the same engine binary.
-2. **Get a new egress IP.** The new WARP identity produces a new exit IP.
-3. **Bridge SOCKS to HTTP.** For the SOCKS-based engines, privoxy listens on
-   `HTTP_PORT` and forwards to the engine's SOCKS listener.
-4. **Export lowercase proxy variables.** `proxy.env` sets `http_proxy` and
-   `https_proxy` — OpenCode ignores the uppercase forms
-   ([anomalyco/opencode#6953](https://github.com/anomalyco/opencode/issues/6953)).
-5. **Verify the new IP.** The script reads
-   `https://www.cloudflare.com/cdn-cgi/trace` through the proxy and compares it
-   with the previous IP (unless `FORCE_NEW_IP=0`).
-6. **Probe Zen.** It sends a tiny chat completion to the Zen endpoint with the
-   key from `auth.json` and classifies the result as `OK`, `LIMITED`, or
-   `UNKNOWN`.
-7. **Clear caches.** On success — or an inconclusive probe, which is treated as
-   success — it removes `~/.cache/opencode` when `CLEAR_CACHE=1`.
-8. **Start `opencode serve`.** With `SERVE_AUTOSTART=1`, `serve` is started
-   (foreground by default, background with `--bg`).
-
-If every attempt on every engine is still `LIMITED`, the script stops and warns
-that you are probably on the per-account quota rather than the IP limiter.
-
-## Troubleshooting
-
-**`bind_std.go` panic / `panic:` in the engine log**
-
-You are running a warp-plus build under proot. `SO_RCVBUFFORCE` and
-`SO_SNDBUFFORCE` return `EPERM` because proot has no `CAP_NET_ADMIN`, and the
-vendored `wireguard-go` bind code does not fall back. The panic path is
-`RoutineTUNEventReader -> Up -> BindUpdate -> Open -> listenNet`. Use `usque`
-(the default) instead; `./zenreset.sh reset --engine usque` forces it.
-
-**`proxy did not come up in time` / `no egress IP`**
-
-The engine is alive but traffic is not flowing. Check the per-engine log in
-`~/.local/share/zenreset/log/engine-<engine>.log`. `doctor` boot-tests every
-installed engine and shows which one survives; under proot it skips the two
-warp-plus builds, which always fail there. A missing `/dev/net/tun` or
-missing IPv6 can also prevent an engine from working.
-
-**`still limited` on every fresh IP**
-
-This is the separate per-account daily/hourly quota, not the egress-IP limiter.
-IP rotation cannot fix it. Wait for the quota window to reset; the script prints
-this warning when it exhausts all engines and attempts.
-
-**Limits persist after a successful reset**
-
-Check that OpenCode is not still using another provider. Rotation only changes
-the IP that Zen sees; other providers keep their own limits, and a stale
-credential can keep you on one of them:
-
-```bash
-opencode auth list                 # see which providers are configured
-opencode auth logout <provider>    # remove every provider except Zen
-```
-
-`zenreset.sh reset` prints the same reminder after a successful rotation.
-
-**Still rate-limited in a session that started before the reset**
-
-If you are continuing an existing OpenCode session rather than starting a fresh
-one, you may need to switch models before the new egress IP takes effect — the
-session can keep behaving as if it were still on the old one. Switch to another
-model and back (or start a new session), then retry. A successful reset does not
-reliably reach sessions that were already running when it happened.
-
-**`cloudflare-warp: no linux-<arch> asset matched`**
-
-The release does not contain an asset matching the current architecture. The
-script prints the release's actual asset names after the warning — `doctor`
-prints them too — so you can compare them with `uname -m`. `arm64`, `amd64`,
-and `armv7` are the recognized tags.
-
-**`bash: unexpected EOF while looking for matching '"'` when copy-pasting**
-
-The pasted script was truncated or a smart quote replaced a plain `"`.
-Re-download it with the `curl` command above, then run:
-
-```bash
-bash -n zenreset.sh
-```
-
-A clean file ends with `esac`. Smart quotes (`“ ” ‘ ’`) are not valid shell
-syntax; replace them with plain ASCII quotes.
-
-## Uninstall
-
-```bash
-./zenreset.sh uninstall          # prompts before deleting anything
-./zenreset.sh uninstall --yes    # non-interactive
-```
-
-The prompt defaults to "no". If stdin is not a TTY (a script, CI, or
-`curl | bash`), `uninstall` refuses without `--yes` instead of deleting silently.
-
-This stops `opencode serve`, privoxy, and the engine, removes the `oc` shortcut,
-and deletes:
-
-- the state directory: `~/.local/share/zenreset` (or `$XDG_DATA_HOME/zenreset`)
-- the config directory: `~/.config/zenreset` (or `$XDG_CONFIG_HOME/zenreset`)
-
-It leaves behind:
-
-- packages installed by `ensure_deps` (`curl`, `unzip`, `privoxy`, `python3`)
-- `opencode` itself, and the `~/.local/bin/opencode` shim if you ran `shim`
-- `zenreset.sh` and this repository
-
-Remove the shim manually with `rm ~/.local/bin/opencode` if you created it.
-
-## Credits
-
-- [bepass-org/warp-plus](https://github.com/bepass-org/warp-plus) — the
-  WireGuard-based WARP client (Linux and Android builds).
-- [Diniboy1123/usque](https://github.com/Diniboy1123/usque) — the MASQUE/QUIC
-  WARP client that works under proot, and the default engine.
-- [shahradelahi/cloudflare-warp](https://github.com/shahradelahi/cloudflare-warp)
-  — the third engine option.
-- [Privoxy](https://www.privoxy.org/) — the SOCKS-to-HTTP bridge.
-- [anomalyco/opencode#34344](https://github.com/anomalyco/opencode/issues/34344)
-  — the report that identified IP-keyed Zen rate limiting.
-
-## License
-
-MIT. See [LICENSE](LICENSE).
+- **The account quota still exists.** If your daily/hourly free quota is exhausted, no amount of IP rotation helps and every attempt will 429. The script's failure message says this explicitly rather than looping forever.
+- **`EXIT_MODE=psiphon`** with `--country` gives you a genuinely different IP range, useful when WARP's shared pool is saturated. Set it in `~/.config/zenreset/config.env`.
+- **warp-plus will log a TUN warning** inside proot — expected, it falls back to SOCKS mode.
+- **If `zen_probe` returns `UNKNOWN`** it's usually the `FreeTierError` ("free tier can only be used from within OpenCode"), which means the UA check didn't match. Harmless — the real test is running opencode itself.
+- If you'd rather not run privoxy, [`shahradelahi/cloudflare-warp`](https://github.com/shahradelahi/cloudflare-warp) exposes SOCKS5 *and* HTTP from one binary (`warp run --socks-addr ... --http-addr ...`), so you can swap both components for it.
