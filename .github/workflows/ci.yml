@@ -8,14 +8,14 @@ permissions:
   contents: read
 
 jobs:
-  shellcheck:
-    name: shellcheck
+  lint-and-test:
+    name: lint and test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install shellcheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
-      - name: Syntax check
-        run: bash -n zenreset.sh
-      - name: ShellCheck
-        run: shellcheck zenreset.sh
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y shellcheck privoxy
+      - name: Lint
+        run: make check
+      - name: Test
+        run: make test
