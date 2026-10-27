@@ -248,6 +248,14 @@ This is the separate per-account daily/hourly quota, not the egress-IP limiter.
 IP rotation cannot fix it. Wait for the quota window to reset; the script prints
 this warning when it exhausts all engines and attempts.
 
+**Still rate-limited in a session that started before the reset**
+
+If you are continuing an existing OpenCode session rather than starting a fresh
+one, you may need to switch models before the new egress IP takes effect — the
+session can keep behaving as if it were still on the old one. Switch to another
+model and back (or start a new session), then retry. A successful reset does not
+reliably reach sessions that were already running when it happened.
+
 **`cloudflare-warp: no linux-<arch> asset matched`**
 
 The release does not contain an asset matching the current architecture. The
