@@ -2,6 +2,10 @@
 
 Clear OpenCode Zen free-tier `Rate limit exceeded` errors by rotating your WARP egress IP.
 
+**Platform:** Debian. Runs on a regular Debian host (`arm64`/`amd64`) and on
+Debian running under [`proot-distro`](https://github.com/termux/proot-distro)
+inside Termux on Android (`aarch64`).
+
 ## Why this exists
 
 OpenCode Zen keys its free-model limiter to the caller's **egress IP**
@@ -15,7 +19,8 @@ of pretending another rotation will help.
 
 The script is built for the awkward case this was written from: OpenCode running
 on Debian installed through `proot-distro` under Termux on Android, where the
-usual WireGuard-based engines fall over (see [Engines](#engines)).
+usual WireGuard-based engines fall over (see [Engines](#engines)). The same
+script runs unchanged on a normal Debian host.
 
 ## Install
 
