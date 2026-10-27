@@ -38,7 +38,7 @@ PRIVOXY_CFG="$PRIVOXY_DIR/config"
 REAL_FILE="$CFG_DIR/opencode.real"
 WORKING_FILE="$CFG_DIR/engine.working"
 
-mkdir -p "$CFG_DIR" "$STATE_DIR" "$BIN_DIR" "$LOG_DIR" "$RUN_DIR" "$PRIVOXY_DIR"
+ensure_dirs() { mkdir -p "$CFG_DIR" "$STATE_DIR" "$BIN_DIR" "$LOG_DIR" "$RUN_DIR" "$PRIVOXY_DIR"; }
 
 # ------------------------------- defaults -----------------------------------
 : "${SOCKS_PORT:=18086}"
@@ -73,6 +73,9 @@ mkdir -p "$CFG_DIR" "$STATE_DIR" "$BIN_DIR" "$LOG_DIR" "$RUN_DIR" "$PRIVOXY_DIR"
 
 # -------------------------------- helpers -----------------------------------
 c_r=$'\033[31m'; c_g=$'\033[32m'; c_y=$'\033[33m'; c_b=$'\033[36m'; c_0=$'\033[0m'
+if [ -n "${NO_COLOR+x}" ] || [ ! -t 1 ]; then
+  c_r=''; c_g=''; c_y=''; c_b=''; c_0=''
+fi
 log()  { printf '%s[zenreset]%s %s\n' "$c_b" "$c_0" "$*"; }
 ok()   { printf '%s[ ok ]%s %s\n' "$c_g" "$c_0" "$*"; }
 warn() { printf '%s[warn]%s %s\n' "$c_y" "$c_0" "$*" >&2; }
@@ -505,15 +508,19 @@ PY
   fi
 
   log "engine boot test (${ENGINE_BOOT_WAIT}s each, no rotation):"
+  # Never leave a bridge or engine behind, whether the test passes, fails, or
+  # is interrupted.
+  trap 'stop_proc privoxy; stop_proc engine; exit 130' INT TERM
   for e in $(engine_order); do
     [ -x "$(engine_bin "$e")" ] || continue
     if bring_up "$e"; then
       ok "  $e: SURVIVED, egress $(egress_ip || echo '<none>')"
-      stop_proc privoxy; stop_proc engine
     else
       warn "  $e: FAILED"
     fi
+    stop_proc privoxy; stop_proc engine
   done
+  trap - INT TERM
   echo
   [ -s "$WORKING_FILE" ] && ok "working engine cached: $(cat "$WORKING_FILE")"
   echo
@@ -721,6 +728,11 @@ for a in "$@"; do
   esac
 done
 [ "$NO_SERVE" = "1" ] && SERVE_AUTOSTART=0
+
+# help/version/status/stop/forget/unlink/uninstall must not create state directories.
+case "$CMD" in
+  install|doctor|start|reset|serve|watch|shim|link) ensure_dirs ;;
+esac
 
 case "$CMD" in
   install)   cmd_install ;;
