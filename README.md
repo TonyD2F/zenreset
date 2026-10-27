@@ -20,9 +20,14 @@ usual WireGuard-based engines fall over (see [Engines](#engines)).
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<owner>/zenreset/main/zenreset.sh -o zenreset.sh
+curl -fsSL https://raw.githubusercontent.com/TonyD2F/zenreset/main/zenreset.sh -o zenreset.sh
 chmod +x zenreset.sh
+./zenreset.sh version   # expect: 1.5.0
 ```
+
+Every [release](https://github.com/TonyD2F/zenreset/releases) also carries
+`zenreset.sh` as a download, if you would rather pin a version than track
+`main`.
 
 ## Requirements
 
@@ -113,7 +118,7 @@ Default order: `usque`, `warp-plus-linux`, `warp-plus-android`, `cloudflare-warp
 | `usque` | MASQUE/QUIC | **Works — default** | Never touches the `wireguard-go` bind path, so the proot limitation below does not apply. Registers a WARP account on first use. |
 | `warp-plus-linux` | WireGuard (`wireguard-go`) | **Fails under proot** | `SO_RCVBUFFORCE` / `SO_SNDBUFFORCE` return `EPERM`; the vendored bind code does not fall back to plain `SO_RCVBUF`, the device tears down and nil-derefs. |
 | `warp-plus-android` | WireGuard (`wireguard-go`) | **Fails under proot** | Same vendored `wireguard-go` code path as the Linux build; both builds are affected. |
-| `cloudflare-warp` | Cloudflare WARP client | Not the default | Kept as a third option. `doctor` boot-tests it. It talks directly to its own SOCKS/HTTP listeners, so no privoxy bridge is used. |
+| `cloudflare-warp` | Cloudflare WARP client | Not the default | Kept as a fallback option. `doctor` boot-tests it. It talks directly to its own SOCKS/HTTP listeners, so no privoxy bridge is used. |
 
 ### Why the warp-plus builds fail under proot
 
