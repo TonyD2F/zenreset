@@ -37,7 +37,7 @@ script runs unchanged on a normal Debian host.
 ```bash
 curl -fsSL https://raw.githubusercontent.com/TonyD2F/zenreset/main/zenreset.sh -o zenreset.sh
 chmod +x zenreset.sh
-./zenreset.sh version   # expect: 1.5.3
+./zenreset.sh version   # expect: 1.6.0
 ```
 
 Every [release](https://github.com/TonyD2F/zenreset/releases) also carries
@@ -76,6 +76,11 @@ oc status
 `reset --bg` runs the same rotation with `opencode serve` daemonised instead of
 in the foreground.
 
+Running `./zenreset.sh serve` asks which IP and port to serve on. Press Enter to
+accept `SERVE_HOST` and `SERVE_PORT` from your config. When stdin is not a
+terminal (scripts, CI, `curl | bash`), the prompt is skipped and the configured
+values are used, so nothing blocks.
+
 ### The `oc` shortcut
 
 `./zenreset.sh link` writes an `oc` wrapper to `/usr/local/bin` when that
@@ -101,7 +106,7 @@ All flags are parsed globally, so they may follow any subcommand.
 | `reset` | Rotates the WARP identity, checks the new egress IP, probes Zen, clears local OpenCode caches, then starts `opencode serve`. |
 | `reset --bg` | Same as `reset`, but `opencode serve` is daemonised. |
 | `reset --engine NAME` | Forces a single engine instead of walking the configured order. |
-| `serve` | Brings the stack up if needed, then (re)starts `opencode serve` through the proxy. |
+| `serve` | Brings the stack up if needed, asks for the IP and port (Enter keeps the configured defaults), then (re)starts `opencode serve` through the proxy. |
 | `start` | Brings up the first engine that works, writes the proxy env, and prints status. |
 | `status` | Shows engine, privoxy, and serve state, the direct IP, the proxy IP, and the Zen probe result. |
 | `stop` | Stops `opencode serve`, privoxy, and the engine. |
@@ -112,7 +117,7 @@ All flags are parsed globally, so they may follow any subcommand.
 | `unlink` | Removes the `oc` shortcut from `/usr/local/bin` and `~/.local/bin`. |
 | `uninstall [--yes]` | Stops everything, removes the shortcut, and deletes the state and config directories. Prompts for confirmation; `--yes` skips it and is required when stdin is not a TTY. |
 | `help` | Prints the usage block. |
-| `version` | Prints the version (`1.5.3`). |
+| `version` | Prints the version (`1.6.0`). |
 
 | Flag | Effect |
 |---|---|
@@ -188,8 +193,8 @@ every tunable and default.
 | `PROXY_WAIT` | seconds | `30` | How long to wait for an engine to provide working egress. |
 | `SERVE_AUTOSTART` | `0` \| `1` | `1` | Start `opencode serve` after a successful rotation. `--no-serve` overrides this. |
 | `SERVE_BACKGROUND` | `0` \| `1` | `0` | Run `opencode serve` daemonised. `--bg` / `--fg` override this. |
-| `SERVE_HOST` | address | `127.0.0.1` | `--hostname` passed to `opencode serve`. |
-| `SERVE_PORT` | port | `4096` | `--port` passed to `opencode serve`. |
+| `SERVE_HOST` | address | `127.0.0.1` | `--hostname` passed to `opencode serve`. `serve` prompts for it, with this as the default. |
+| `SERVE_PORT` | port | `4096` | `--port` passed to `opencode serve`. `serve` prompts for it, with this as the default. |
 | `SERVE_ARGS` | string | empty | Extra arguments appended to `opencode serve`. |
 | `SERVE_WAIT` | seconds | `3` | Wait after launching a background `serve` before checking it. |
 | `SERVE_RESTART_ON_RESET` | `0` \| `1` | `1` | Restart an already-running `serve` after a reset. |

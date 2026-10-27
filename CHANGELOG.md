@@ -4,6 +4,20 @@ Notable changes to `zenreset.sh`. This project uses [semantic
 versioning](https://semver.org/): the minor number moves for behaviour changes,
 the patch number for fixes to a release.
 
+## [1.6.0] - 2026-10-27
+
+### Changed
+
+- `serve` asks which IP and port to serve on. The current `SERVE_HOST` and
+  `SERVE_PORT` are shown as defaults, so pressing Enter twice behaves exactly as
+  before. The prompt is skipped when stdin is not a terminal, so scripts, CI,
+  and `curl | bash` stay non-interactive.
+
+### Fixed
+
+- A non-numeric or out-of-range port typed at the prompt falls back to `4096`
+  with a warning instead of being passed to `opencode serve`.
+
 ## [1.5.3] - 2026-10-27
 
 ### Changed

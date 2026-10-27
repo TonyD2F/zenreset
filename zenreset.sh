@@ -25,7 +25,7 @@
 # =============================================================================
 set -uo pipefail
 
-VERSION="1.5.3"
+VERSION="1.6.0"
 
 CFG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/zenreset"
 CFG_FILE="$CFG_DIR/config.env"
@@ -660,7 +660,26 @@ cmd_reset() {
   return 1
 }
 
-cmd_serve() { ensure_deps; write_env_file; is_up engine || cmd_start; start_serve; }
+# Ask where to serve when attached to a terminal. Enter keeps the configured
+# default; non-interactive runs (CI, pipes) silently use it.
+ask_serve_target() {
+  [ -t 0 ] || return 0
+  local host port
+  printf 'Serve on IP [%s]: ' "$SERVE_HOST"
+  read -r host || host=""
+  [ -n "$host" ] && SERVE_HOST="$host"
+  printf 'Serve on port [%s]: ' "$SERVE_PORT"
+  read -r port || port=""
+  [ -n "$port" ] && SERVE_PORT="$port"
+  case "$SERVE_PORT" in
+    ''|*[!0-9]*) warn "invalid port '$SERVE_PORT' — using 4096"; SERVE_PORT=4096 ;;
+  esac
+  if [ "$SERVE_PORT" -lt 1 ] || [ "$SERVE_PORT" -gt 65535 ]; then
+    warn "port out of range — using 4096"; SERVE_PORT=4096
+  fi
+}
+
+cmd_serve() { ensure_deps; ask_serve_target; write_env_file; is_up engine || cmd_start; start_serve; }
 
 cmd_watch() {
   log "watching every ${WATCH_INTERVAL}s"
@@ -782,7 +801,7 @@ zenreset.sh — clear OpenCode Zen rate limits by rotating egress IP
   reset                rotate until clear, then launch opencode serve
   reset --bg           same, serve daemonised
   reset --engine NAME  force one engine
-  serve                (re)start opencode serve through the proxy
+  serve                (re)start opencode serve (asks for host and port)
   start | status | stop
   watch                poll Zen, auto-reset + auto-serve
   forget               clear the cached working engine

@@ -155,6 +155,87 @@ EOF
   return 0
 }
 
+# Shared fixture: a fake opencode that records its argv, and a "running" engine
+# so `serve` does not try to start one.
+_serve_fixture() {
+  local tmp="$1" cfg="$1/.config/zenreset"
+  mkdir -p "$cfg" "$tmp/.local/share/zenreset/run" "$tmp/.local/share/zenreset/log" "$tmp/bin"
+  cat > "$cfg/config.env" <<EOF
+ENGINES="usque"
+SERVE_WAIT=0
+SOCKS_PORT=19086
+HTTP_PORT=19118
+EOF
+  {
+    echo '#!/bin/sh'
+    echo "echo \"\$@\" >> \"$tmp/args\""
+    echo 'exec sleep 300'
+  } > "$tmp/bin/opencode"
+  chmod +x "$tmp/bin/opencode"
+  sleep 300 &
+  echo $! > "$tmp/.local/share/zenreset/run/engine.pid"
+}
+
+_serve_cleanup() {
+  local tmp="$1" f p
+  for f in "$tmp"/.local/share/zenreset/run/*.pid; do
+    [ -f "$f" ] || continue
+    p=$(cat "$f" 2>/dev/null) || continue
+    kill "$p" 2>/dev/null
+    rm -f "$f"
+  done
+  rm -rf "$tmp"
+}
+
+# Pressing Enter at both prompts must serve on the configured defaults.
+t_serve_prompt_defaults_on_enter() {
+  local tmp out got
+  command -v script >/dev/null 2>&1 || { echo "skip: script not available"; return 0; }
+  tmp=$(mktemp -d)
+  _serve_fixture "$tmp"
+  out=$(printf '\n\n' | script -qec "env HOME='$tmp' PATH='$tmp/bin:$PATH' '$SCRIPT' serve --bg" /dev/null 2>&1)
+  got=$(cat "$tmp/args" 2>/dev/null)
+  _serve_cleanup "$tmp"
+  case "$out" in *"Serve on IP"*) ;; *) echo "no IP prompt shown: $out"; return 1 ;; esac
+  case "$got" in
+    *"--hostname 127.0.0.1"*"--port 4096"*) return 0 ;;
+  esac
+  echo "expected defaults 127.0.0.1:4096, got: ${got:-<none>}"
+  return 1
+}
+
+# Typed values must replace the defaults.
+t_serve_prompt_accepts_input() {
+  local tmp got
+  command -v script >/dev/null 2>&1 || { echo "skip: script not available"; return 0; }
+  tmp=$(mktemp -d)
+  _serve_fixture "$tmp"
+  printf '0.0.0.0\n5050\n' | script -qec "env HOME='$tmp' PATH='$tmp/bin:$PATH' '$SCRIPT' serve --bg" /dev/null >/dev/null 2>&1
+  got=$(cat "$tmp/args" 2>/dev/null)
+  _serve_cleanup "$tmp"
+  case "$got" in
+    *"--hostname 0.0.0.0"*"--port 5050"*) return 0 ;;
+  esac
+  echo "expected 0.0.0.0:5050, got: ${got:-<none>}"
+  return 1
+}
+
+# Without a TTY (CI, scripts) serve must not block on a prompt.
+t_serve_noninteractive_uses_defaults() {
+  local tmp got
+  tmp=$(mktemp -d)
+  _serve_fixture "$tmp"
+  ( unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME
+    HOME="$tmp" PATH="$tmp/bin:$PATH" "$SCRIPT" serve --bg </dev/null ) >/dev/null 2>&1
+  got=$(cat "$tmp/args" 2>/dev/null)
+  _serve_cleanup "$tmp"
+  case "$got" in
+    *"--hostname 127.0.0.1"*"--port 4096"*) return 0 ;;
+  esac
+  echo "expected defaults without prompting, got: ${got:-<none>}"
+  return 1
+}
+
 echo
 echo "zenreset tests"
 check "version/help leave \$HOME untouched" t_readonly_no_side_effects
@@ -162,6 +243,9 @@ check "doctor stops a failed engine and its bridge" t_doctor_cleans_up_failed_en
 check "doctor skips warp-plus boot tests under proot" t_doctor_skips_warp_plus_under_proot
 check "uninstall refuses without confirmation" t_uninstall_requires_confirmation
 check "NO_COLOR output has no ANSI escapes" t_nocolor_output
+check "serve prompt: Enter keeps defaults" t_serve_prompt_defaults_on_enter
+check "serve prompt: typed host/port are used" t_serve_prompt_accepts_input
+check "serve without a TTY uses defaults" t_serve_noninteractive_uses_defaults
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
