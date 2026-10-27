@@ -25,7 +25,7 @@
 # =============================================================================
 set -uo pipefail
 
-VERSION="1.5.2"
+VERSION="1.5.3"
 
 CFG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/zenreset"
 CFG_FILE="$CFG_DIR/config.env"
@@ -327,6 +327,10 @@ enable-edit-actions 0
 EOF
 }
 
+is_proot() {
+  [ -n "${PROOT_L2S_DIR:-}" ] || [ -n "${PROOT_TMP_DIR:-}" ] || [ "${container:-}" = "proot-distro" ]
+}
+
 engine_args() {
   case "$1" in
     warp-plus-linux|warp-plus-android)
@@ -561,6 +565,13 @@ PY
   trap 'stop_proc privoxy; stop_proc engine; exit 130' INT TERM
   for e in $(engine_order); do
     [ -x "$(engine_bin "$e")" ] || continue
+    if is_proot; then
+      case "$e" in
+        warp-plus-linux|warp-plus-android)
+          warn "  $e: skipping boot test under proot (SO_RCVBUFFORCE/EPERM)"
+          continue ;;
+      esac
+    fi
     if bring_up "$e"; then
       ok "  $e: SURVIVED, egress $(egress_ip || echo '<none>')"
     else

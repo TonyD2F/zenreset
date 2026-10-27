@@ -1,5 +1,10 @@
 # zenreset
 
+[![CI](https://github.com/TonyD2F/zenreset/actions/workflows/ci.yml/badge.svg)](https://github.com/TonyD2F/zenreset/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/TonyD2F/zenreset?sort=semver)](https://github.com/TonyD2F/zenreset/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Debian%20%7C%20proot-informational)](#requirements)
+
 Clear OpenCode Zen free-tier `Rate limit exceeded` errors by rotating your WARP egress IP.
 
 **Platform:** Debian. Runs on a regular Debian host (`arm64`/`amd64`) and on
@@ -32,12 +37,12 @@ script runs unchanged on a normal Debian host.
 ```bash
 curl -fsSL https://raw.githubusercontent.com/TonyD2F/zenreset/main/zenreset.sh -o zenreset.sh
 chmod +x zenreset.sh
-./zenreset.sh version   # expect: 1.5.2
+./zenreset.sh version   # expect: 1.5.3
 ```
 
 Every [release](https://github.com/TonyD2F/zenreset/releases) also carries
 `zenreset.sh` as a download, if you would rather pin a version than track
-`main`.
+`main`. See [CHANGELOG.md](CHANGELOG.md) for what changed between versions.
 
 ## Requirements
 
@@ -92,7 +97,7 @@ All flags are parsed globally, so they may follow any subcommand.
 | Command | What it does |
 |---|---|
 | `install` | Installs missing dependencies, fetches every engine, writes the privoxy config and proxy env file. |
-| `doctor [--no-fetch]` | Prints arch, kernel, TUN, IPv6, privoxy, and cached engine. Fetches engines (unless `--no-fetch`), lists which are present, runs the socket-option probe, then boot-tests each installed engine. |
+| `doctor [--no-fetch]` | Prints arch, kernel, TUN, IPv6, privoxy, and cached engine. Fetches engines (unless `--no-fetch`), lists which are present, runs the socket-option probe, then boot-tests each installed engine. Under proot it skips the two warp-plus builds, which cannot work there. |
 | `reset` | Rotates the WARP identity, checks the new egress IP, probes Zen, clears local OpenCode caches, then starts `opencode serve`. |
 | `reset --bg` | Same as `reset`, but `opencode serve` is daemonised. |
 | `reset --engine NAME` | Forces a single engine instead of walking the configured order. |
@@ -107,7 +112,7 @@ All flags are parsed globally, so they may follow any subcommand.
 | `unlink` | Removes the `oc` shortcut from `/usr/local/bin` and `~/.local/bin`. |
 | `uninstall [--yes]` | Stops everything, removes the shortcut, and deletes the state and config directories. Prompts for confirmation; `--yes` skips it and is required when stdin is not a TTY. |
 | `help` | Prints the usage block. |
-| `version` | Prints the version (`1.5.2`). |
+| `version` | Prints the version (`1.5.3`). |
 
 | Flag | Effect |
 |---|---|
@@ -233,7 +238,8 @@ vendored `wireguard-go` bind code does not fall back. The panic path is
 
 The engine is alive but traffic is not flowing. Check the per-engine log in
 `~/.local/share/zenreset/log/engine-<engine>.log`. `doctor` boot-tests every
-installed engine and shows which one survives. A missing `/dev/net/tun` or
+installed engine and shows which one survives; under proot it skips the two
+warp-plus builds, which always fail there. A missing `/dev/net/tun` or
 missing IPv6 can also prevent an engine from working.
 
 **`still limited` on every fresh IP**
