@@ -169,6 +169,7 @@ EOF
   {
     echo '#!/bin/sh'
     echo "echo \"\$@\" >> \"$tmp/args\""
+    echo "echo \"PW=\${OPENCODE_SERVER_PASSWORD:-}\" >> \"$tmp/env\""
     echo 'exec sleep 300'
   } > "$tmp/bin/opencode"
   chmod +x "$tmp/bin/opencode"
@@ -236,6 +237,24 @@ t_serve_noninteractive_uses_defaults() {
   return 1
 }
 
+# Password and CORS from config must reach opencode serve.
+t_serve_password_and_cors() {
+  local tmp got env
+  tmp=$(mktemp -d)
+  _serve_fixture "$tmp"
+  printf 'SERVE_PASSWORD=pw123\nSERVE_CORS="http://pc.local:3000 *"\n' >> "$tmp/.config/zenreset/config.env"
+  ( unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME
+    HOME="$tmp" PATH="$tmp/bin:$PATH" "$SCRIPT" serve --bg </dev/null ) >/dev/null 2>&1
+  got=$(cat "$tmp/args" 2>/dev/null)
+  env=$(cat "$tmp/env" 2>/dev/null)
+  _serve_cleanup "$tmp"
+  case "$got" in
+    *"--cors http://pc.local:3000 --cors *"*) ;;
+    *) echo "cors args missing: ${got:-<none>}"; return 1 ;;
+  esac
+  [ "$env" = "PW=pw123" ] || { echo "password not exported: ${env:-<none>}"; return 1; }
+}
+
 echo
 echo "zenreset tests"
 check "version/help leave \$HOME untouched" t_readonly_no_side_effects
@@ -246,6 +265,7 @@ check "NO_COLOR output has no ANSI escapes" t_nocolor_output
 check "serve prompt: Enter keeps defaults" t_serve_prompt_defaults_on_enter
 check "serve prompt: typed host/port are used" t_serve_prompt_accepts_input
 check "serve without a TTY uses defaults" t_serve_noninteractive_uses_defaults
+check "serve passes password and CORS" t_serve_password_and_cors
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

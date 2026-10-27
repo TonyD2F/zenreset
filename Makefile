@@ -13,7 +13,7 @@ test:
 
 # Slow and networked: boots real engines and needs a working egress path.
 test-doctor:
-	@test "$$(./$(SCRIPT) version)" = "1.6.0"
+	@test "$$(./$(SCRIPT) version)" = "1.7.0"
 	@./$(SCRIPT) help | grep -q 'clear OpenCode Zen rate limits'
 	@./$(SCRIPT) doctor --no-fetch >/dev/null
 	@echo "test-doctor: PASS"

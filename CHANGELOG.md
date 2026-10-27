@@ -4,6 +4,19 @@ Notable changes to `zenreset.sh`. This project uses [semantic
 versioning](https://semver.org/): the minor number moves for behaviour changes,
 the patch number for fixes to a release.
 
+## [1.7.0] - 2026-10-27
+
+### Added
+
+- `SERVE_PASSWORD` and `SERVE_CORS`. `serve` exports the password as
+  `OPENCODE_SERVER_PASSWORD`, which turns on basic auth (username `opencode`),
+  and passes each CORS origin as its own `--cors` flag. A phone can now serve to
+  a PC browser on the same network without hand-writing those flags.
+- `reset` prints a reminder to remove other OpenCode providers when limits
+  persist; rotation only affects the IP that Zen sees.
+- README: LAN/PC-browser recipe, `SERVE_PASSWORD`/`SERVE_CORS` reference, and a
+  troubleshooting entry for limits that survive a successful reset.
+
 ## [1.6.0] - 2026-10-27
 
 ### Changed

@@ -37,7 +37,7 @@ script runs unchanged on a normal Debian host.
 ```bash
 curl -fsSL https://raw.githubusercontent.com/TonyD2F/zenreset/main/zenreset.sh -o zenreset.sh
 chmod +x zenreset.sh
-./zenreset.sh version   # expect: 1.6.0
+./zenreset.sh version   # expect: 1.7.0
 ```
 
 Every [release](https://github.com/TonyD2F/zenreset/releases) also carries
@@ -81,6 +81,31 @@ accept `SERVE_HOST` and `SERVE_PORT` from your config. When stdin is not a
 terminal (scripts, CI, `curl | bash`), the prompt is skipped and the configured
 values are used, so nothing blocks.
 
+### Serve to your PC browser
+
+`serve` listens on `127.0.0.1` by default. To open it from another device on your
+LAN, put the phone's address, a password, and (if the browser needs it) CORS in
+`~/.config/zenreset/config.env`:
+
+```bash
+SERVE_HOST=10.240.14.189     # the phone's IP on your network
+SERVE_PORT=3000
+SERVE_PASSWORD=choose-a-password
+SERVE_CORS=*                 # or e.g. http://10.0.0.5:3000
+```
+
+```bash
+./zenreset.sh serve --bg
+```
+
+Open `http://10.240.14.189:3000` on your PC and log in as `opencode` with that
+password (`OPENCODE_SERVER_USERNAME` changes the username). `SERVE_PASSWORD` is
+exported as `OPENCODE_SERVER_PASSWORD`; with no password set the server is
+unauthenticated.
+
+This is plain HTTP over your LAN. Anyone who can reach the port can try to log
+in, so use a real password and keep it on a trusted network.
+
 ### The `oc` shortcut
 
 `./zenreset.sh link` writes an `oc` wrapper to `/usr/local/bin` when that
@@ -117,7 +142,7 @@ All flags are parsed globally, so they may follow any subcommand.
 | `unlink` | Removes the `oc` shortcut from `/usr/local/bin` and `~/.local/bin`. |
 | `uninstall [--yes]` | Stops everything, removes the shortcut, and deletes the state and config directories. Prompts for confirmation; `--yes` skips it and is required when stdin is not a TTY. |
 | `help` | Prints the usage block. |
-| `version` | Prints the version (`1.6.0`). |
+| `version` | Prints the version (`1.7.0`). |
 
 | Flag | Effect |
 |---|---|
@@ -196,6 +221,8 @@ every tunable and default.
 | `SERVE_HOST` | address | `127.0.0.1` | `--hostname` passed to `opencode serve`. `serve` prompts for it, with this as the default. |
 | `SERVE_PORT` | port | `4096` | `--port` passed to `opencode serve`. `serve` prompts for it, with this as the default. |
 | `SERVE_ARGS` | string | empty | Extra arguments appended to `opencode serve`. |
+| `SERVE_PASSWORD` | string | empty | Exported as `OPENCODE_SERVER_PASSWORD` before launching `opencode serve`, which enables HTTP basic auth (username `opencode`). |
+| `SERVE_CORS` | string | empty | Space-separated origins, each passed as its own `--cors` flag. `*` allows any origin. |
 | `SERVE_WAIT` | seconds | `3` | Wait after launching a background `serve` before checking it. |
 | `SERVE_RESTART_ON_RESET` | `0` \| `1` | `1` | Restart an already-running `serve` after a reset. |
 | `SHA256_<ENGINE>` | hex | empty | Optional pin for a downloaded engine binary. The name is `SHA256_` plus the engine name in uppercase with `-` replaced by `_` (for example `SHA256_WARP_PLUS_LINUX`). A mismatch aborts the install. |
@@ -252,6 +279,19 @@ missing IPv6 can also prevent an engine from working.
 This is the separate per-account daily/hourly quota, not the egress-IP limiter.
 IP rotation cannot fix it. Wait for the quota window to reset; the script prints
 this warning when it exhausts all engines and attempts.
+
+**Limits persist after a successful reset**
+
+Check that OpenCode is not still using another provider. Rotation only changes
+the IP that Zen sees; other providers keep their own limits, and a stale
+credential can keep you on one of them:
+
+```bash
+opencode auth list                 # see which providers are configured
+opencode auth logout <provider>    # remove every provider except Zen
+```
+
+`zenreset.sh reset` prints the same reminder after a successful rotation.
 
 **Still rate-limited in a session that started before the reset**
 

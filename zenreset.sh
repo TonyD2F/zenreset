@@ -25,7 +25,7 @@
 # =============================================================================
 set -uo pipefail
 
-VERSION="1.6.0"
+VERSION="1.7.0"
 
 CFG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/zenreset"
 CFG_FILE="$CFG_DIR/config.env"
@@ -66,6 +66,8 @@ ensure_dirs() { mkdir -p "$CFG_DIR" "$STATE_DIR" "$BIN_DIR" "$LOG_DIR" "$RUN_DIR
 : "${SERVE_HOST:=127.0.0.1}"
 : "${SERVE_PORT:=4096}"
 : "${SERVE_ARGS:=}"
+: "${SERVE_PASSWORD:=}"
+: "${SERVE_CORS:=}"
 : "${SERVE_WAIT:=3}"
 : "${SERVE_RESTART_ON_RESET:=1}"
 
@@ -483,7 +485,13 @@ start_serve() {
   local args=()
   [ -n "$SERVE_HOST" ] && args+=(--hostname "$SERVE_HOST")
   [ -n "$SERVE_PORT" ] && args+=(--port "$SERVE_PORT")
+  if [ -n "$SERVE_CORS" ]; then
+    local origins=() origin
+    read -r -a origins <<< "$SERVE_CORS"
+    for origin in "${origins[@]}"; do args+=(--cors "$origin"); done
+  fi
   if [ -n "$SERVE_ARGS" ]; then local x; read -r -a x <<< "$SERVE_ARGS"; args+=("${x[@]}"); fi
+  [ -n "$SERVE_PASSWORD" ] && export OPENCODE_SERVER_PASSWORD="$SERVE_PASSWORD"
   local url="http://${SERVE_HOST}:${SERVE_PORT}"
 
   if [ "$mode" = bg ]; then
@@ -609,6 +617,13 @@ cmd_status() {
   echo
 }
 
+# Rotation only clears limits on the Zen provider. Other providers keep their
+# own limits, so say this rather than let users chase an IP that cannot help.
+providers_hint() {
+  log "reminder: if limits persist, remove other OpenCode providers so only Zen is used"
+  log "          opencode auth list  ->  opencode auth logout <provider>"
+}
+
 cmd_reset() {
   ensure_deps; write_env_file
   local prev_ip; prev_ip=$(egress_ip 2>/dev/null || echo "")
@@ -642,10 +657,10 @@ cmd_reset() {
         local v; v=$(zen_probe); log "zen probe: $v"
         case "$v" in
           OK) ok "limit cleared on $cur via $e"
-              clear_local_state; cmd_status; start_serve; return 0 ;;
+              clear_local_state; cmd_status; providers_hint; start_serve; return 0 ;;
           LIMITED) warn "still limited on $cur"; sleep "$ATTEMPT_SLEEP"; continue ;;
           *) warn "inconclusive probe; assuming cleared"
-             clear_local_state; cmd_status; start_serve; return 0 ;;
+             clear_local_state; cmd_status; providers_hint; start_serve; return 0 ;;
         esac
       else
         clear_local_state; start_serve; return 0
