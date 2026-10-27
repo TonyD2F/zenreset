@@ -50,3 +50,41 @@ nohup ./zenreset.sh watch &
 - **warp-plus will log a TUN warning** inside proot — expected, it falls back to SOCKS mode.
 - **If `zen_probe` returns `UNKNOWN`** it's usually the `FreeTierError` ("free tier can only be used from within OpenCode"), which means the UA check didn't match. Harmless — the real test is running opencode itself.
 - If you'd rather not run privoxy, [`shahradelahi/cloudflare-warp`](https://github.com/shahradelahi/cloudflare-warp) exposes SOCKS5 *and* HTTP from one binary (`warp run --socks-addr ... --http-addr ...`), so you can swap both components for it.
+
+
+It's for **Debian running inside proot on Android** — i.e. `proot-distro login debian` from Termux. That's the environment the script assumes and the only one it's tuned for.
+
+Everything it touches lives inside that Debian container: `apt-get`, `/usr/local/bin`, `~/.config`, the WARP client, privoxy, and `opencode` itself. Nothing runs on the Termux side.
+
+| Environment | Works? | Notes |
+|---|---|---|
+| Debian via proot-distro in Termux | Yes — target | `usque` default, EPERM handling, no-IPv6 handling all apply |
+| Real Debian / Ubuntu / a VPS | Yes | Better, actually — see below |
+| Termux natively (no proot) | No, not as-is | needs patching |
+
+**Why not Termux directly:** the script uses Debian conventions Termux doesn't have — `apt-get` instead of `pkg`, `/usr/local/bin` instead of `$PREFIX/bin`, glibc paths instead of bionic. It would need those swapped, plus different release asset names (`android-arm64` rather than `linux-arm64`). Not hard, just not what's written.
+
+**On real Debian it works better, not worse.** Two things are proot-specific problems:
+
+- The `SO_RCVBUFFORCE`/`SO_SNDBUFFORCE` EPERM failure happens because proot's root is *fake* root with no `CAP_NET_ADMIN`. On real Debian as root you have that capability, so warp-plus doesn't crash and both warp-plus engines become usable.
+- `/proc/net/if_inet6` missing is your proot kernel, not Debian itself.
+
+So on a real Debian box you'd want to reorder to put warp-plus first:
+
+```bash
+# ~/.config/zenreset/config.env
+ENGINES="warp-plus-linux warp-plus-android usque cloudflare-warp"
+```
+
+`usque` stays as the default purely because it's the only engine that survives the proot capability gap.
+
+**One thing worth flagging:** `link` installs `oc` into `/usr/local/bin` *inside* the container. So `oc` works after `proot-distro login debian`, but not from a Termux prompt. If you want it from Termux too, add a Termux-side wrapper:
+
+```bash
+# in Termux, not proot
+mkdir -p ~/.local/bin
+printf '#!/data/data/com.termux/files/usr/bin/sh\nexec proot-distro login debian -- bash -lc "cd ~/Desktop/reset && ./zenreset.sh %s"\n' '"$@"' > ~/.local/bin/oc
+chmod +x ~/.local/bin/oc
+```
+
+That gives you `oc reset` from Termux that drops into Debian, runs the reset, and returns. Note it can't be `oc` in both places at once — pick one, or name the Termux one `ocz`.
