@@ -17,6 +17,11 @@ There is a second, **separate per-account daily/hourly quota** that IP rotation
 cannot fix. `zenreset.sh` says so plainly when it exhausts its attempts, instead
 of pretending another rotation will help.
 
+`usque` registers a free WARP account on first use and accepts Cloudflare's terms
+by passing `--accept-tos`. Rotating the egress IP works around a limiter keyed to
+your address; it does not create a new account or a new per-account quota.
+Whether that is acceptable is between you and the services you use.
+
 The script is built for the awkward case this was written from: OpenCode running
 on Debian installed through `proot-distro` under Termux on Android, where the
 usual WireGuard-based engines fall over (see [Engines](#engines)). The same
@@ -27,7 +32,7 @@ script runs unchanged on a normal Debian host.
 ```bash
 curl -fsSL https://raw.githubusercontent.com/TonyD2F/zenreset/main/zenreset.sh -o zenreset.sh
 chmod +x zenreset.sh
-./zenreset.sh version   # expect: 1.5.1
+./zenreset.sh version   # expect: 1.5.2
 ```
 
 Every [release](https://github.com/TonyD2F/zenreset/releases) also carries
@@ -100,9 +105,9 @@ All flags are parsed globally, so they may follow any subcommand.
 | `shim` | Wraps the real `opencode` binary in `~/.local/bin/opencode` so it always sources the proxy env. |
 | `link` | Installs the `oc` shortcut described above. |
 | `unlink` | Removes the `oc` shortcut from `/usr/local/bin` and `~/.local/bin`. |
-| `uninstall` | Stops everything, removes the shortcut, and deletes the state and config directories. |
+| `uninstall [--yes]` | Stops everything, removes the shortcut, and deletes the state and config directories. Prompts for confirmation; `--yes` skips it and is required when stdin is not a TTY. |
 | `help` | Prints the usage block. |
-| `version` | Prints the version (`1.5.1`). |
+| `version` | Prints the version (`1.5.2`). |
 
 | Flag | Effect |
 |---|---|
@@ -111,6 +116,7 @@ All flags are parsed globally, so they may follow any subcommand.
 | `--fg` | Sets `SERVE_BACKGROUND=0`; `opencode serve` runs in the foreground. |
 | `--engine NAME` | Sets `ENGINE` to one engine for this run (`--engine=NAME` also works). |
 | `--no-fetch` | Sets `DOCTOR_FETCH=0`; `doctor` skips downloading engines. |
+| `--yes`, `-y` | Sets `ASSUME_YES=1`; `uninstall` skips the confirmation prompt. |
 
 ## Engines
 
@@ -161,6 +167,7 @@ every tunable and default.
 | `HTTP_PORT` | port | `18118` | Local HTTP proxy port used by privoxy, the IP check, the Zen probe, and OpenCode. |
 | `MAX_ATTEMPTS` | integer | `6` | Rotations attempted per engine before moving on. |
 | `ATTEMPT_SLEEP` | seconds | `3` | Pause between attempts. |
+| `MAX_RESET_SECONDS` | seconds | `900` | Wall-clock budget for one `reset` across all engines; `0` disables the deadline. |
 | `ENGINES` | list | `usque warp-plus-linux warp-plus-android cloudflare-warp` | Engine order used when `ENGINE` is empty. |
 | `ENGINE` | string | empty | Force one engine; empty means walk `ENGINES`/the cached order. |
 | `EXIT_MODE` | `warp` \| `psiphon` \| `scan` | `warp` | warp-plus exit strategy. `psiphon` adds `--cfon --country $PSIPHON_COUNTRY`; `scan` adds `--scan`. Ignored by `usque` and `cloudflare-warp`. |
@@ -181,6 +188,12 @@ every tunable and default.
 | `SERVE_ARGS` | string | empty | Extra arguments appended to `opencode serve`. |
 | `SERVE_WAIT` | seconds | `3` | Wait after launching a background `serve` before checking it. |
 | `SERVE_RESTART_ON_RESET` | `0` \| `1` | `1` | Restart an already-running `serve` after a reset. |
+| `SHA256_<ENGINE>` | hex | empty | Optional pin for a downloaded engine binary. The name is `SHA256_` plus the engine name in uppercase with `-` replaced by `_` (for example `SHA256_WARP_PLUS_LINUX`). A mismatch aborts the install. |
+
+Two environment variables are also read, but are not written to `config.env`:
+`GH_TOKEN` lifts the unauthenticated GitHub API limit that `install` and
+`doctor` hit when fetching release metadata, and `NO_COLOR` disables ANSI
+colours. Output is also uncoloured automatically when stdout is not a TTY.
 
 ## How it works
 
@@ -251,8 +264,12 @@ syntax; replace them with plain ASCII quotes.
 ## Uninstall
 
 ```bash
-./zenreset.sh uninstall
+./zenreset.sh uninstall          # prompts before deleting anything
+./zenreset.sh uninstall --yes    # non-interactive
 ```
+
+The prompt defaults to "no". If stdin is not a TTY (a script, CI, or
+`curl | bash`), `uninstall` refuses without `--yes` instead of deleting silently.
 
 This stops `opencode serve`, privoxy, and the engine, removes the `oc` shortcut,
 and deletes:

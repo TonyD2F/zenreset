@@ -96,10 +96,32 @@ t_nocolor_output() {
   return 0
 }
 
+# uninstall must refuse to delete state without confirmation, and --yes must work.
+t_uninstall_requires_confirmation() {
+  local tmp cfg rc survived removed
+  tmp=$(mktemp -d)
+  cfg="$tmp/.config/zenreset"
+  mkdir -p "$cfg"
+  echo '# marker' > "$cfg/config.env"
+
+  ( unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME
+    HOME="$tmp" "$SCRIPT" uninstall </dev/null ) >/dev/null 2>&1
+  rc=$?
+  survived=0; [ -f "$cfg/config.env" ] && survived=1
+
+  ( unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME
+    HOME="$tmp" "$SCRIPT" uninstall --yes </dev/null ) >/dev/null 2>&1
+  removed=0; [ ! -e "$cfg" ] && removed=1
+
+  rm -rf "$tmp"
+  [ "$rc" -ne 0 ] && [ "$survived" -eq 1 ] && [ "$removed" -eq 1 ]
+}
+
 echo
 echo "zenreset tests"
 check "version/help leave \$HOME untouched" t_readonly_no_side_effects
 check "doctor stops a failed engine and its bridge" t_doctor_cleans_up_failed_engine
+check "uninstall refuses without confirmation" t_uninstall_requires_confirmation
 check "NO_COLOR output has no ANSI escapes" t_nocolor_output
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"

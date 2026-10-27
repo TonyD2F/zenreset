@@ -25,7 +25,7 @@
 # =============================================================================
 set -uo pipefail
 
-VERSION="1.5.1"
+VERSION="1.5.2"
 
 CFG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/zenreset"
 CFG_FILE="$CFG_DIR/config.env"
@@ -44,6 +44,7 @@ ensure_dirs() { mkdir -p "$CFG_DIR" "$STATE_DIR" "$BIN_DIR" "$LOG_DIR" "$RUN_DIR
 : "${SOCKS_PORT:=18086}"
 : "${HTTP_PORT:=18118}"
 : "${MAX_ATTEMPTS:=6}"
+: "${MAX_RESET_SECONDS:=900}"
 : "${ATTEMPT_SLEEP:=3}"
 # usque first: the only engine that survives proot's missing CAP_NET_ADMIN
 : "${ENGINES:=usque warp-plus-linux warp-plus-android cloudflare-warp}"
@@ -142,7 +143,30 @@ engine_bin() {
 }
 engine_state_dir() { echo "$STATE_DIR/engines/$1"; }
 
-gh_release_json() { curl -sSL --max-time 25 "https://api.github.com/repos/$1/releases/latest" 2>/dev/null; }
+GH_API_ERR=""
+gh_release_json() { # repo
+  local repo="$1" body hdr="" code
+  local -a auth=()
+  body=$(mktemp)
+  if [ -n "${GH_TOKEN:-}" ]; then
+    hdr=$(mktemp)
+    printf 'Authorization: Bearer %s\n' "$GH_TOKEN" > "$hdr"
+    auth=(-H @"$hdr")
+  fi
+  code=$(curl -sSL --max-time 25 -o "$body" -w '%{http_code}' "${auth[@]}" \
+      "https://api.github.com/repos/$repo/releases/latest" 2>/dev/null) || code=000
+  [ -n "$hdr" ] && rm -f "$hdr"
+  GH_API_ERR=""
+  case "$code" in
+    200) cat "$body"; rm -f "$body"; return 0 ;;
+    403|429) GH_API_ERR="GitHub API rate limited (HTTP $code) — export GH_TOKEN or retry later" ;;
+    404) GH_API_ERR="GitHub release API: $repo not found (HTTP 404)" ;;
+    000) GH_API_ERR="GitHub release API unreachable" ;;
+    *)   GH_API_ERR="GitHub release API HTTP $code for $repo" ;;
+  esac
+  rm -f "$body"
+  return 1
+}
 
 gh_asset_url() { # repo pattern...
   local repo="$1"; shift
@@ -164,8 +188,15 @@ gh_asset_names() { # repo - for debugging
   gh_release_json "$1" | grep -o '"name":[^,]*' | sed 's/.*"\([^"]*\)".*/\1/' | head -n 12
 }
 
+engine_sha_var() { printf 'SHA256_%s' "$(printf '%s' "$1" | tr -c 'A-Za-z0-9_' '_' | tr '[:lower:]' '[:upper:]')"; }
+engine_sha_pin() {
+  local v val; v=$(engine_sha_var "$1")
+  eval "val=\${$v:-}"
+  printf '%s' "$val"
+}
+
 install_asset() {
-  local url="$1" dest="$2" tmp; tmp=$(mktemp -d)
+  local url="$1" dest="$2" want="${3:-}" tmp; tmp=$(mktemp -d)
   log "fetching $(basename "$url")"
   curl -fL --retry 3 --max-time 300 -o "$tmp/a" "$url" || { rm -rf "$tmp"; return 1; }
   case "$url" in
@@ -176,6 +207,14 @@ install_asset() {
   local f; f=$(find "$tmp" -type f -perm -u+x ! -name '*.zip' ! -name '*.tar.*' \
                  ! -name '*.dgst' ! -name '*.sig' 2>/dev/null | head -n1)
   [ -z "$f" ] && f="$tmp/a"
+  if [ -n "$want" ]; then
+    local got; got=$(sha256sum "$f" 2>/dev/null | awk '{print $1}')
+    if [ "$got" != "$want" ]; then
+      warn "sha256 mismatch for $(basename "$url"): got ${got:-<none>}, expected $want"
+      rm -rf "$tmp"; return 1
+    fi
+    ok "sha256 verified: $(basename "$url")"
+  fi
   install -m 0755 "$f" "$dest" || { rm -rf "$tmp"; return 1; }
   rm -rf "$tmp"
 }
@@ -183,6 +222,7 @@ install_asset() {
 fetch_engine() {
   local e="$1" bin; bin=$(engine_bin "$e")
   [ -n "$bin" ] || { warn "unknown engine: $e"; return 1; }
+  GH_API_ERR=""
 
   if [ ! -x "$bin" ] && [ -x "$BIN_DIR/warp-plus" ] && [ "$e" = "warp-plus-linux" ]; then
     mv "$BIN_DIR/warp-plus" "$bin" && ok "migrated legacy warp-plus -> $bin" && return 0
@@ -203,14 +243,20 @@ fetch_engine() {
       url=$(gh_asset_url "$repo" "linux[-_.]?${tag}" "linux[-_.]?aarch64" "${tag}" ) || true ;;
   esac
   if [ -z "$url" ]; then
-    warn "$e: no linux-$tag asset matched"
-    if [ -n "$repo" ]; then
+    if [ -n "$GH_API_ERR" ]; then
+      warn "$e: $GH_API_ERR"
+    else
+      warn "$e: no linux-$tag asset matched"
+    fi
+    if [ -n "$repo" ] && [ -z "$GH_API_ERR" ]; then
       local names; names=$(gh_asset_names "$repo")
       [ -n "$names" ] && printf '%s\n' "$names" | sed 's/^/         - /' >&2
     fi
     return 1
   fi
-  install_asset "$url" "$bin" || { warn "$e: install failed"; return 1; }
+  local pin; pin=$(engine_sha_pin "$e")
+  [ -z "$pin" ] && warn "$e: no $(engine_sha_var "$e") pin; installing an unverified upstream asset"
+  install_asset "$url" "$bin" "$pin" || { warn "$e: install failed"; return 1; }
   ok "$e -> $bin"
 }
 
@@ -238,12 +284,14 @@ zen_key() {
 }
 
 zen_probe() {
-  local key body code
+  local key body hdr code
   key=$(zen_key) || { echo UNKNOWN; return 0; }
-  body=$(mktemp)
+  body=$(mktemp); hdr=$(mktemp)
+  # Keep the bearer token out of argv, where ps and /proc would expose it.
+  printf 'Authorization: Bearer %s\n' "$key" > "$hdr"
   code=$(curl -sS -m 45 -o "$body" -w '%{http_code}' \
       -x "http://127.0.0.1:$HTTP_PORT" -A 'opencode/2.0' \
-      -H "Authorization: Bearer $key" -H 'Content-Type: application/json' \
+      -H @"$hdr" -H 'Content-Type: application/json' \
       -d "{\"model\":\"$PROBE_MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":4}" \
       "https://opencode.ai/inference/openai/v1/chat/completions" 2>/dev/null) || code=000
   local out=UNKNOWN
@@ -251,7 +299,7 @@ zen_probe() {
   elif [ "$code" = "429" ]; then out=LIMITED
   elif grep -qi 'rate limit' "$body" 2>/dev/null; then out=LIMITED
   fi
-  rm -f "$body"; echo "$out"
+  rm -f "$body" "$hdr"; echo "$out"
 }
 
 direct_ip() {
@@ -553,12 +601,16 @@ cmd_status() {
 cmd_reset() {
   ensure_deps; write_env_file
   local prev_ip; prev_ip=$(egress_ip 2>/dev/null || echo "")
-  local any_up=0 e
+  local any_up=0 e deadline=$((SECONDS + MAX_RESET_SECONDS)) timed_out=0
 
   for e in $(engine_order); do
     fetch_engine "$e" || continue
     local tries=0
     while [ "$tries" -lt "$MAX_ATTEMPTS" ]; do
+      if [ "$MAX_RESET_SECONDS" -gt 0 ] && [ "$SECONDS" -ge "$deadline" ]; then
+        warn "reset deadline (${MAX_RESET_SECONDS}s) reached"
+        timed_out=1; break
+      fi
       tries=$((tries + 1))
       log "engine=$e  attempt $tries/$MAX_ATTEMPTS"
 
@@ -588,6 +640,7 @@ cmd_reset() {
         clear_local_state; start_serve; return 0
       fi
     done
+    [ "$timed_out" = "1" ] && break
   done
 
   warn "exhausted every engine / attempt."
@@ -601,12 +654,14 @@ cmd_serve() { ensure_deps; write_env_file; is_up engine || cmd_start; start_serv
 cmd_watch() {
   log "watching every ${WATCH_INTERVAL}s"
   while :; do
-    if is_up privoxy || is_up engine; then
+    # Probe only through a live proxy. Previously an engine without privoxy
+    # looked healthy, and serve could start against a dead bridge.
+    if ! is_up privoxy || ! is_up engine; then
+      warn "stack down — starting"; cmd_start >/dev/null 2>&1 || true
+    else
       local v; v=$(zen_probe)
       if [ "$v" = "LIMITED" ]; then log "429 — resetting"; cmd_reset || true
       elif [ "$SERVE_AUTOSTART" = "1" ] && ! is_up serve; then start_serve bg; fi
-    else
-      warn "stack down — starting"; cmd_start >/dev/null 2>&1 || true
     fi
     sleep "$WATCH_INTERVAL"
   done
@@ -689,7 +744,23 @@ cmd_unlink() {
   done
 }
 
-cmd_uninstall() { cmd_stop; cmd_unlink; rm -rf "$STATE_DIR" "$CFG_DIR"; ok "removed"; }
+cmd_uninstall() {
+  if [ "${ASSUME_YES:-0}" != "1" ]; then
+    if [ ! -t 0 ]; then
+      warn "refusing to delete $STATE_DIR and $CFG_DIR without confirmation"
+      warn "re-run with: zenreset.sh uninstall --yes"
+      return 1
+    fi
+    printf 'Remove %s and %s? [y/N] ' "$STATE_DIR" "$CFG_DIR"
+    local ans=""
+    read -r ans || true
+    case "$ans" in
+      y|Y|yes|YES) ;;
+      *) warn "aborted"; return 1 ;;
+    esac
+  fi
+  cmd_stop; cmd_unlink; rm -rf "$STATE_DIR" "$CFG_DIR"; ok "removed"
+}
 
 usage() {
   cat <<'EOF'
@@ -707,6 +778,7 @@ zenreset.sh — clear OpenCode Zen rate limits by rotating egress IP
   shim                 opencode wrapper that auto-applies the proxy
   link                 install an `oc` shortcut on your PATH
   unlink               remove it
+  uninstall [--yes]    stop everything and delete config + state
 
 engines: usque (default), warp-plus-linux, warp-plus-android, cloudflare-warp
 config : ~/.config/zenreset/config.env
@@ -715,13 +787,14 @@ EOF
 
 # --------------------------------- dispatch ---------------------------------
 CMD="${1:-help}"; shift || true
-NO_SERVE=0; DOCTOR_FETCH=1
+NO_SERVE=0; DOCTOR_FETCH=1; ASSUME_YES=0
 for a in "$@"; do
   case "$a" in
     --no-serve)  NO_SERVE=1 ;;
     --no-fetch)  DOCTOR_FETCH=0 ;;
     --bg)        SERVE_BACKGROUND=1 ;;
     --fg)        SERVE_BACKGROUND=0 ;;
+    --yes|-y)    ASSUME_YES=1 ;;
     --engine=*)  ENGINE="${a#*=}" ;;
     --engine)    ENGINE="__next__" ;;
     *) if [ "$ENGINE" = "__next__" ]; then ENGINE="$a"; else warn "unknown flag: $a"; fi ;;
